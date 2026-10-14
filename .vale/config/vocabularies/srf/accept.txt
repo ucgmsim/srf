@@ -1,0 +1,22 @@
+# Project vocabulary for Vale. One term per line, treated as a regex.
+
+# The format and the tools around it
+SRF
+EMOD3D
+genslip
+codec
+docstrings
+numpy
+scipy
+nom
+[Ss]ubfaults?
+
+# Places in the test fixtures
+Darfield
+Christchurch
+
+# British spelling, the house style
+[Cc]entres?
+[Mm]etres?
+[Kk]ilometres?
+[Cc]entimetres?

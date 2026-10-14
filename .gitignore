@@ -1,0 +1,35 @@
+# Python-generated files
+__pycache__/
+*.py[oc]
+build/
+dist/
+wheels/
+*.egg-info
+
+# Virtual environments
+.venv
+
+# Rust
+target/
+
+# The compiled extension. `uv sync` builds it; a committed one goes stale.
+*.so
+*.pyd
+*.dylib
+
+# Hypothesis
+.hypothesis/
+
+### Vale ###
+# `vale sync` downloads the styles named by `Packages` in .vale.ini into
+# StylesPath. Only the project vocabulary under .vale/config is tracked.
+/.vale/*
+!/.vale/config/
+/.vale/config/*
+!/.vale/config/vocabularies/
+# The repo's own style, alongside the downloaded packages.
+!/.vale/ucgmsim/
+
+### Coverage ###
+.coverage
+htmlcov/
