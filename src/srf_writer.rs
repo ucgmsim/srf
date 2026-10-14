@@ -659,10 +659,10 @@ POINTS 1\n\
                 error.contains("comment 1") && error.contains(expected),
                 "{error}"
             );
-            assert!(out.is_empty());
+            assert_eq!(out, Vec::<u8>::new());
             let error = write_header_v2(&mut out, &srf.comments, &srf.planes).unwrap_err();
             assert!(error.to_string().contains(expected));
-            assert!(out.is_empty());
+            assert_eq!(out, Vec::<u8>::new());
         }
     }
 

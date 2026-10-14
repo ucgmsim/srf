@@ -519,7 +519,7 @@ POINTS 2\n\
                 ["made by: a test", "", " indented, with #s inside #"],
             );
         }
-        assert!(read_srf(SRF_V2).unwrap().comments.is_empty());
+        assert_eq!(read_srf(SRF_V2).unwrap().comments, Vec::<String>::new());
     }
 
     #[test]
@@ -528,7 +528,7 @@ POINTS 2\n\
         // The parse stops at PLANE, so a file cut short there still reads.
         let cut = &commented[..commented.len() - 40];
         assert_eq!(read_comments(cut).unwrap(), ["one", "two"]);
-        assert!(read_comments(SRF_V2).unwrap().is_empty());
+        assert_eq!(read_comments(SRF_V2).unwrap(), Vec::<String>::new());
         assert!(matches!(
             read_comments(b"3.0\n# no\n"),
             Err(SrfParseError::UnknownVersion(_))
