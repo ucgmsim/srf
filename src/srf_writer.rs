@@ -627,7 +627,7 @@ POINTS 1\n\
             write_srf(&mut out, &srf),
             Err(WriteError::RaggedMetadata)
         ));
-        assert!(out.is_empty());
+        assert_eq!(out, Vec::<u8>::new());
 
         let mut srf = parse(SRF_V1);
         srf.planes[0].nstk = 3;
