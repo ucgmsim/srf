@@ -434,6 +434,22 @@ pub fn read_srf(input: &[u8]) -> Result<SrfFile, SrfParseError> {
     }
 }
 
+/// Parse an SRF's version line and header comments, and nothing after them.
+///
+/// The parse stops at the first line that isn't a comment, so it reads a few
+/// kilobytes of a file of any size.
+///
+/// # Errors
+///
+/// [`SrfParseError`] if the bytes don't start with an SRF version line.
+pub fn read_comments(input: &[u8]) -> Result<Vec<String>, SrfParseError> {
+    match (version, comments).parse(input) {
+        Ok((_, (_, comments))) => Ok(comments),
+        Err(nom::Err::Error(fault) | nom::Err::Failure(fault)) => Err(fault.into_error(input)),
+        Err(nom::Err::Incomplete(_)) => unreachable!("every parser here is complete"),
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -504,6 +520,19 @@ POINTS 2\n\
             );
         }
         assert!(read_srf(SRF_V2).unwrap().comments.is_empty());
+    }
+
+    #[test]
+    fn the_comments_alone_read_without_the_rest() {
+        let commented = replace_once(SRF_V2, b"PLANE", b"# one\n# two\nPLANE");
+        // The parse stops at PLANE, so a file cut short there still reads.
+        let cut = &commented[..commented.len() - 40];
+        assert_eq!(read_comments(cut).unwrap(), ["one", "two"]);
+        assert!(read_comments(SRF_V2).unwrap().is_empty());
+        assert!(matches!(
+            read_comments(b"3.0\n# no\n"),
+            Err(SrfParseError::UnknownVersion(_))
+        ));
     }
 
     #[test]

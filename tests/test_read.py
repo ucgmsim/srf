@@ -1,6 +1,7 @@
 """Reading real and hand-written SRFs, adapted from source_modelling's tests."""
 
 import dataclasses
+import gzip
 
 import numpy as np
 import pytest
@@ -271,3 +272,15 @@ def test_an_unknown_version_is_refused():
 def test_a_missing_file_is_an_os_error(tmp_path):
     with pytest.raises(FileNotFoundError):
         srf.read(tmp_path / "missing.srf")
+
+
+def test_the_comments_read_alone_match_the_whole_file():
+    data = gzip.decompress((SRF_DIR / "test_v2.srf.gz").read_bytes())
+    whole = srf.read(data)
+    assert srf.read_comments(data) == whole.comments
+    # The read stops at PLANE, so a file cut off in its planes still reads.
+    cut = data[: data.index(b"PLANE") + 8]
+    assert srf.read_comments(cut) == whole.comments
+    assert srf.read_comments(SRF_DIR / "point_source_v2.srf") == ()
+    with pytest.raises(srf.SrfError, match="unknown SRF version"):
+        srf.read_comments(b"3.0\n# no\n")

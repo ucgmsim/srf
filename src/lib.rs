@@ -87,6 +87,18 @@ pub fn parse_srf(py: Python<'_>, buffer: PyBuffer<u8>) -> PyResult<Py<PySrfFile>
 #[pyfunction]
 /// # Errors
 ///
+/// If the buffer isn't C-contiguous, or doesn't start with an SRF version line.
+pub fn parse_comments(py: Python<'_>, buffer: PyBuffer<u8>) -> PyResult<Vec<String>> {
+    if !buffer.is_c_contiguous() {
+        return Err(PyValueError::new_err("SRF buffer must be C-contiguous"));
+    }
+    let bytes = buffer_bytes(&buffer);
+    py.detach(|| srf_parser::read_comments(bytes).or_else(marshall_srf_error))
+}
+
+#[pyfunction]
+/// # Errors
+///
 /// If opening or writing the file fails.
 pub fn write_srf(py: Python<'_>, py_srf_file: Py<PySrfFile>, file_path: &str) -> PyResult<()> {
     let srf = py_srf_file.borrow(py);
@@ -282,6 +294,7 @@ fn core(m: &Bound<'_, PyModule>) -> PyResult<()> {
     m.add_class::<PySrfWriter>()?;
     m.add_function(wrap_pyfunction!(write_srf, m)?)?;
     m.add_function(wrap_pyfunction!(parse_srf, m)?)?;
+    m.add_function(wrap_pyfunction!(parse_comments, m)?)?;
 
     Ok(())
 }

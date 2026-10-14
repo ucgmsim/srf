@@ -23,6 +23,7 @@ rupture.points.slip1  # slip at each point, in cm
 rupture.slip_rate.pulse(0)  # point 0's slip rate in cm/s, from its onset
 rupture.rise  # rise times in seconds
 rupture.comments  # the header's "#" lines, without the "# "
+srf.read_comments("rupture.srf")  # the same, reading the header alone
 
 srf.write("copy.srf", rupture)
 ```
