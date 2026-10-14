@@ -13,7 +13,8 @@ on:
 
 jobs:
   build:
-    uses: ucgmsim/meta-ci-action/.github/workflows/build-dist.yml@v2
+    # v2.3, not v2: the v2 tag predates build-dist.yml.
+    uses: ucgmsim/meta-ci-action/.github/workflows/build-dist.yml@v2.3
     with:
       ref: ${{ inputs.tag_name }}
 

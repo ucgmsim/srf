@@ -1,6 +1,7 @@
 [project]
 name = "ucgmsim-srf"
-version = "0.1.0"
+# setuptools-scm reads the version from the git tag.
+dynamic = ["version"]
 description = "Read and write Standard Rupture Format (SRF) files."
 readme = "README.md"
 license = "MIT"
@@ -16,13 +17,25 @@ test = ["hypothesis>=6.151.0", "pytest>=8", "pytest-cov>=5"]
 dev = ["deptry", "ruff", "ty"]
 
 [build-system]
-requires = ["maturin>=1.0,<2.0"]
-build-backend = "maturin"
+requires = ["setuptools>=77", "setuptools-scm>=8", "setuptools-rust>=1.11"]
+build-backend = "setuptools.build_meta"
 
-[tool.maturin]
-module-name = "srf._core"
-python-packages = ["srf"]
-python-source = "src"
+[tool.setuptools_scm]
+
+[tool.setuptools.packages.find]
+where = ["src"]
+include = ["srf*"]
+
+[tool.setuptools.package-data]
+srf = ["py.typed", "*.pyi"]
+
+# `debug = false` because setuptools-rust's default builds an editable install,
+# which is an inplace build, with `cargo build --debug`.
+[[tool.setuptools-rust.ext-modules]]
+target = "srf._core"
+path = "Cargo.toml"
+binding = "PyO3"
+debug = false
 
 [tool.uv]
 cache-keys = [
@@ -30,6 +43,7 @@ cache-keys = [
   { file = "src/**/*.rs" },
   { file = "Cargo.toml" },
   { file = "Cargo.lock" },
+  { git = { commit = true, tags = true } },
 ]
 
 [tool.deptry]
