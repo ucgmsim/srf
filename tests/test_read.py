@@ -176,6 +176,13 @@ def test_a_genslip_version_2():
     """
     real = read_fixture("test_v2.srf.gz")
     assert real.version == 2
+    # genslip writes the command that made the file, and its seeds, as comments.
+    assert real.comments[0].startswith("Command: /home/jake/src/EMOD3D/tools/genslip")
+    assert real.comments[1:4] == (
+        "",
+        "starting_seed= 7252193",
+        "ending_seed= 1320619617",
+    )
     assert dataclasses.asdict(real.planes[0]) == pytest.approx(
         {
             "elon": 176.514603,

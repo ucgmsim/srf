@@ -113,5 +113,7 @@ py_record! {
         planes: Vec<Py<SrfPlane>>,
         metadata: Py<PySrfMetadata>,
         slipt1: Py<PyCsrMatrix>,
+        comments: Vec<String>,
     }
+    signature = (planes, metadata, slipt1, comments = Vec::new())
 }

@@ -9,6 +9,8 @@ from numpy.typing import NDArray
 
 class SrfError(ValueError): ...
 
+MAX_COMMENT_BYTES: int
+
 class PySrfPlane:
     elon: float
     elat: float
@@ -80,15 +82,19 @@ class PySrfFile:
     planes: list[PySrfPlane]
     metadata: PySrfMetadata
     slipt1: PyCsrMatrix
+    comments: list[str]
     def __init__(
         self,
         planes: list[PySrfPlane],
         metadata: PySrfMetadata,
         slipt1: PyCsrMatrix,
+        comments: list[str] = ...,
     ) -> None: ...
 
 class SrfWriter:
-    def __init__(self, file_path: str, planes: list[PySrfPlane]) -> None: ...
+    def __init__(
+        self, file_path: str, planes: list[PySrfPlane], comments: list[str] = ...
+    ) -> None: ...
     def write(self, metadata: PySrfMetadata, slipt1: PyCsrMatrix) -> None: ...
     def close(self) -> None: ...
     def __enter__(self) -> Self: ...

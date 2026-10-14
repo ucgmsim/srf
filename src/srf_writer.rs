@@ -25,7 +25,23 @@ pub enum WriteError {
     TooMany { expected: usize },
     #[error("Points written ({written}) do not match the {expected} declared by the plane headers")]
     TooFew { written: usize, expected: usize },
+    #[error("comment {index} has a line break or a NUL, which would end it early")]
+    CommentBreak { index: usize },
+    #[error(
+        "comment {index} is {bytes} bytes; genslip reads at most {MAX_COMMENT_BYTES} per \
+         comment line"
+    )]
+    CommentLength { index: usize, bytes: usize },
 }
+
+/// The longest comment the writer takes, in bytes.
+///
+/// genslip's `read_srf` reads each comment line with `fgets(str, MAXLINE, ...)`, and
+/// its `MAXLINE` is 8192. A longer line splits in two, and its rest, which has no `#`,
+/// reads as the `PLANE` line. The `# ` before a comment and the newline after it bring
+/// a comment this long to 8191 bytes, and `fgets` keeps the last byte for its
+/// closing NUL. EMOD3D's `get_srf_parP3` reads lines of up to 10000 bytes.
+pub const MAX_COMMENT_BYTES: usize = 8188;
 
 type Result<T> = std::result::Result<T, WriteError>;
 
@@ -281,15 +297,52 @@ fn write_srf_points_v2<W: Write, S: AsRef<[f32]>, R: AsRef<[usize]>, D: AsRef<[f
     Ok(())
 }
 
-/// The version line and the plane header of a version 2 SRF: everything that
-/// comes before the first point.
+/// The version line, the comments and the plane header of a version 2 SRF:
+/// everything that comes before the first point.
 ///
 /// # Errors
 ///
-/// If writing fails.
-pub fn write_header_v2<W: Write>(writer: &mut W, planes: &[SrfPlane]) -> io::Result<()> {
+/// If a comment can't be one line of the header, checked before writing a byte, or
+/// writing fails.
+pub fn write_header_v2<W: Write>(
+    writer: &mut W,
+    comments: &[String],
+    planes: &[SrfPlane],
+) -> Result<()> {
+    check_comments(comments)?;
     writer.write_all(VERSION_2)?;
-    write_plane_header(writer, planes)
+    write_comments(writer, comments)?;
+    write_plane_header(writer, planes)?;
+    Ok(())
+}
+
+/// Refuse a comment that can't be one line of the header, as genslip reads it.
+fn check_comments(comments: &[String]) -> Result<()> {
+    for (index, comment) in comments.iter().enumerate() {
+        if comment.contains(['\n', '\r', '\0']) {
+            return Err(WriteError::CommentBreak { index });
+        }
+        if comment.len() > MAX_COMMENT_BYTES {
+            return Err(WriteError::CommentLength {
+                index,
+                bytes: comment.len(),
+            });
+        }
+    }
+    Ok(())
+}
+
+/// Each comment as a `#` line, in the place genslip's `write_srf` puts them: after the
+/// version line and before `PLANE`.
+fn write_comments<W: Write>(writer: &mut W, comments: &[String]) -> io::Result<()> {
+    for comment in comments {
+        if comment.is_empty() {
+            writer.write_all(b"#\n")?;
+        } else {
+            writeln!(writer, "# {comment}")?;
+        }
+    }
+    Ok(())
 }
 
 fn write_plane_header<W: Write>(writer: &mut W, planes: &[SrfPlane]) -> io::Result<()> {
@@ -327,8 +380,8 @@ fn write_version<W: Write, S>(
 /// # Errors
 ///
 /// If the metadata columns differ in length, the plane headers declare a different
-/// number of points, the matrix doesn't have one well-formed row per point, or writing
-/// fails.
+/// number of points, the matrix doesn't have one well-formed row per point, a comment
+/// can't be one line of the header, or writing fails.
 pub fn write_srf<W: Write, S: AsRef<[f32]>, R: AsRef<[usize]>>(
     writer: &mut W,
     srf_file: &SrfFile<S, R>,
@@ -343,7 +396,9 @@ pub fn write_srf<W: Write, S: AsRef<[f32]>, R: AsRef<[usize]>>(
         return Err(WriteError::PlanePoints { expected, points });
     }
     check_slip(&srf_file.slipt1, points)?;
+    check_comments(&srf_file.comments)?;
     write_version(writer, &srf_file.metadata)?;
+    write_comments(writer, &srf_file.comments)?;
     write_plane_header(writer, &srf_file.planes)?;
     match &srf_file.metadata {
         SrfMetadataVersioned::V1(metadata) => {
@@ -448,6 +503,7 @@ POINTS 1\n\
         };
 
         let view: SrfFileView = SrfFile {
+            comments: Vec::new(),
             planes: srf.planes.clone(),
             metadata: SrfMetadataVersioned::V1(SrfMetadata {
                 lon: &metadata.lon,
@@ -516,10 +572,11 @@ POINTS 1\n\
 
     #[test]
     fn a_stream_in_chunks_writes_the_whole_file() {
-        let srf = parse(SRF_V2_TWO_PLANES);
+        let mut srf = parse(SRF_V2_TWO_PLANES);
+        srf.comments = vec!["streamed".to_owned()];
         let metadata = v2(&srf);
         let mut streamed = Vec::new();
-        write_header_v2(&mut streamed, &srf.planes).unwrap();
+        write_header_v2(&mut streamed, &srf.comments, &srf.planes).unwrap();
         let mut stream = PointStream::new(&srf.planes);
         // An empty chunk, then one point, then the other: the plane boundary falls
         // between chunks rather than inside one.
@@ -558,6 +615,55 @@ POINTS 1\n\
             }
         ));
         assert_eq!(tail, Vec::<u8>::new());
+    }
+
+    #[test]
+    fn comments_roundtrip_after_the_version_line() {
+        for data in [SRF_V1, SRF_V2_TWO_PLANES] {
+            let mut srf = parse(data);
+            srf.comments = vec![
+                "made by: a test".to_owned(),
+                String::new(),
+                " indented, with # inside".to_owned(),
+                "x".repeat(MAX_COMMENT_BYTES),
+            ];
+            let written = write_to_vec(&srf);
+            assert!(
+                written[4..].starts_with(b"# made by: a test\n#\n#  indented, with # inside\n")
+            );
+            // Every line fits the 8192-byte buffer genslip reads the header with.
+            assert!(
+                written
+                    .split(|&byte| byte == b'\n')
+                    .all(|line| line.len() < 8191)
+            );
+            let again = parse(&written);
+            assert_eq!(again.comments, srf.comments);
+            assert_eq!(write_to_vec(&again), written);
+        }
+    }
+
+    #[test]
+    fn a_comment_that_is_not_one_short_line_is_refused_before_writing() {
+        for (comment, expected) in [
+            ("two\nlines", "line break"),
+            ("carriage\rreturn", "line break"),
+            ("nul\0", "NUL"),
+            (&"x".repeat(MAX_COMMENT_BYTES + 1), "8189 bytes"),
+        ] {
+            let mut srf = parse(SRF_V2_TWO_PLANES);
+            srf.comments = vec!["fine".to_owned(), comment.to_owned()];
+            let mut out = Vec::new();
+            let error = write_srf(&mut out, &srf).unwrap_err().to_string();
+            assert!(
+                error.contains("comment 1") && error.contains(expected),
+                "{error}"
+            );
+            assert!(out.is_empty());
+            let error = write_header_v2(&mut out, &srf.comments, &srf.planes).unwrap_err();
+            assert!(error.to_string().contains(expected));
+            assert!(out.is_empty());
+        }
     }
 
     /// One point, whose pulse is whatever `indices` and `data` make it.

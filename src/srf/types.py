@@ -19,7 +19,7 @@ from typing import Self
 import numpy as np
 from numpy.typing import ArrayLike, DTypeLike, NDArray
 
-from srf._core import SrfError
+from srf._core import MAX_COMMENT_BYTES, SrfError
 
 POINT_COLUMNS = (
     "lon",
@@ -359,6 +359,37 @@ class SlipRate:
         )
 
 
+def check_comment(index: int, comment: str) -> None:
+    """Refuse a comment that can't be one line of an SRF's header.
+
+    genslip reads each comment line into an 8192-byte buffer. A comment longer than
+    :data:`MAX_COMMENT_BYTES` in UTF-8 would split there, and its rest would read as
+    the ``PLANE`` line.
+
+    Parameters
+    ----------
+    index : int
+        The comment's place among the header's comments, for the error.
+    comment : str
+        The comment, without its leading ``# ``.
+
+    Raises
+    ------
+    SrfError
+        If the comment has a line break or a NUL, or is too long.
+    """
+    if any(character in comment for character in "\n\r\0"):
+        raise SrfError(
+            f"comment {index} has a line break or a NUL, which would end it early"
+        )
+    size = len(comment.encode())
+    if size > MAX_COMMENT_BYTES:
+        raise SrfError(
+            f"comment {index} is {size} bytes; genslip reads at most "
+            f"{MAX_COMMENT_BYTES} per comment line"
+        )
+
+
 @dataclasses.dataclass(frozen=True, eq=False)
 class Srf:
     """A whole SRF: its planes, then their points and pulses in plane order.
@@ -371,21 +402,29 @@ class Srf:
         Every plane's points, the first plane's first.
     slip_rate : SlipRate
         One pulse per point.
+    comments : sequence of str, optional
+        The header's comment lines, each one's text without its leading ``# ``. They
+        sit between the version line and the plane headers, where genslip reads and
+        writes them.
 
     Raises
     ------
     SrfError
         If the planes, the points and the pulses disagree on how many points there
-        are.
+        are, or a comment can't be one line of the header.
     """
 
     planes: Sequence[Plane]
     points: Points
     slip_rate: SlipRate
+    comments: Sequence[str] = ()
 
     def __post_init__(self) -> None:
         """Check the fields and coerce them to the file's types."""
         object.__setattr__(self, "planes", tuple(self.planes))
+        object.__setattr__(self, "comments", tuple(self.comments))
+        for index, comment in enumerate(self.comments):
+            check_comment(index, comment)
         declared = sum(plane.points for plane in self.planes)
         if not declared == len(self.points) == len(self.slip_rate):
             raise SrfError(
@@ -410,4 +449,13 @@ class Srf:
         return tuple(slice(a, b) for a, b in itertools.pairwise(edges))
 
 
-__all__ = ["POINT_COLUMNS", "Plane", "Points", "SlipRate", "Srf", "SrfError"]
+__all__ = [
+    "MAX_COMMENT_BYTES",
+    "POINT_COLUMNS",
+    "Plane",
+    "Points",
+    "SlipRate",
+    "Srf",
+    "SrfError",
+    "check_comment",
+]

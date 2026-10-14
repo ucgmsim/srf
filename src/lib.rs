@@ -125,6 +125,7 @@ pub fn write_srf(py: Python<'_>, py_srf_file: Py<PySrfFile>, file_path: &str) ->
     };
 
     let srf_view: SrfFileView = SrfFileView {
+        comments: srf.comments.clone(),
         planes,
         metadata: metadata_view,
         slipt1: CsrMatrixView {
@@ -158,13 +159,21 @@ pub struct PySrfWriter {
 impl PySrfWriter {
     /// # Errors
     ///
-    /// If creating or writing the file fails.
+    /// If a comment can't be one line of the header, or creating or writing the file
+    /// fails.
     #[new]
-    fn new(py: Python<'_>, file_path: &str, planes: Vec<SrfPlane>) -> PyResult<Self> {
+    #[pyo3(signature = (file_path, planes, comments = Vec::new()))]
+    fn new(
+        py: Python<'_>,
+        file_path: &str,
+        planes: Vec<SrfPlane>,
+        comments: Vec<String>,
+    ) -> PyResult<Self> {
         let writer = py.detach(|| {
             let file = File::create(file_path).or_else(marshall_os_error)?;
             let mut writer = BufWriter::with_capacity(WRITE_BUFFER_CAPACITY, file);
-            srf_writer::write_header_v2(&mut writer, &planes).or_else(marshall_os_error)?;
+            srf_writer::write_header_v2(&mut writer, &comments, &planes)
+                .or_else(marshall_write_error)?;
             Ok::<_, PyErr>(writer)
         })?;
         Ok(Self {
@@ -265,6 +274,7 @@ impl PySrfWriter {
 #[pyo3(name = "_core")]
 fn core(m: &Bound<'_, PyModule>) -> PyResult<()> {
     m.add("SrfError", m.py().get_type::<SrfError>())?;
+    m.add("MAX_COMMENT_BYTES", srf_writer::MAX_COMMENT_BYTES)?;
     m.add_class::<SrfPlane>()?;
     m.add_class::<PyCsrMatrix>()?;
     m.add_class::<PySrfMetadata>()?;

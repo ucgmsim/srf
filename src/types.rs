@@ -452,6 +452,8 @@ impl<'py> IntoPyObject<'py> for SrfMetadataVersioned {
 
 #[derive(Debug)]
 pub struct SrfFile<S = Vec<f32>, R = Vec<usize>> {
+    /// The header's comment lines, each one's text after its `#` and one space.
+    pub comments: Vec<String>,
     pub planes: Vec<SrfPlane>,
     pub metadata: SrfMetadataVersioned<S>,
     pub slipt1: CsrMatrix<R, S>,
@@ -477,6 +479,7 @@ impl<'py> IntoPyObject<'py> for SrfFile {
                 planes,
                 metadata,
                 slipt1,
+                comments: self.comments,
             },
         )?
         .into_bound(py))

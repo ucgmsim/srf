@@ -3,7 +3,8 @@
 The reader takes versions 1.0 and 2.0, and :func:`write` writes either whole. The
 streaming :class:`Writer` writes version 2.0 only. The ``slip1`` component is the
 only one they handle, and the reader refuses a file with a ``slip2`` or ``slip3``
-pulse.
+pulse. Both read and write the header's comments, the ``#`` lines between the version
+line and the plane headers.
 """
 
 import dataclasses
@@ -14,7 +15,7 @@ from types import TracebackType
 from typing import Self
 
 from srf import _core
-from srf.types import Plane, Points, SlipRate, Srf, SrfError
+from srf.types import Plane, Points, SlipRate, Srf, SrfError, check_comment
 
 type FilePath = str | Path
 
@@ -34,6 +35,7 @@ def _from_core(parsed: _core.PySrfFile) -> Srf:
             }
         ),
         slip_rate=SlipRate(offsets=parsed.slipt1.row_ptr, values=parsed.slipt1.data),
+        comments=parsed.comments,
     )
 
 
@@ -115,6 +117,7 @@ def write(path: FilePath, srf: Srf) -> None:
             _core_planes(srf.planes),
             _core_points(srf.points),
             _core_slip_rate(srf.slip_rate),
+            list(srf.comments),
         ),
         str(path),
     )
@@ -135,16 +138,24 @@ class Writer:
         Where to write the file.
     planes : sequence of Plane
         Every plane's header.
+    comments : sequence of str, optional
+        The header's comment lines, each one's text without its leading ``# ``.
 
     Raises
     ------
+    SrfError
+        If a comment can't be one line of the header. The file isn't created.
     OSError
         If creating the file or writing the header fails.
     """
 
-    def __init__(self, path: FilePath, planes: Sequence[Plane]) -> None:
+    def __init__(
+        self, path: FilePath, planes: Sequence[Plane], comments: Sequence[str] = ()
+    ) -> None:
         """Open the file and write the header."""
-        self._writer = _core.SrfWriter(str(path), _core_planes(planes))
+        for index, comment in enumerate(comments):
+            check_comment(index, comment)
+        self._writer = _core.SrfWriter(str(path), _core_planes(planes), list(comments))
 
     def write(self, points: Points, slip_rate: SlipRate) -> None:
         """Write the next points and their pulses.

@@ -146,3 +146,57 @@ def test_an_unwritable_path_is_an_os_error(christchurch, tmp_path):
         srf.write(tmp_path / "missing" / "christchurch.srf", christchurch)
     with pytest.raises(OSError):
         srf.Writer(tmp_path / "missing" / "christchurch.srf", christchurch.planes)
+
+
+# ------------------------------------------------------------------- comments
+
+
+COMMENTS = ("made by: a test", "", "  indented, # inside", "x" * srf.MAX_COMMENT_BYTES)
+
+
+@pytest.mark.parametrize("version", [1, 2])
+def test_comments_round_trip_after_the_version_line(christchurch, tmp_path, version):
+    srf_file = christchurch if version == 1 else with_rock(christchurch)
+    commented = dataclasses.replace(srf_file, comments=COMMENTS)
+    path = tmp_path / "commented.srf"
+    srf.write(path, commented)
+    with path.open() as handle:
+        head = [next(handle) for _ in range(len(COMMENTS) + 2)]
+    assert head[1:4] == ["# made by: a test\n", "#\n", "#   indented, # inside\n"]
+    assert head[-1].startswith("PLANE")
+    # genslip reads the header into an 8192-byte buffer, closing NUL included.
+    assert max(len(line.encode()) for line in head) <= 8191
+    again = srf.read(path)
+    assert again.comments == COMMENTS
+    assert_same(again, commented)
+
+
+def test_a_streamed_file_has_its_comments(darfield_v2, tmp_path):
+    _, srf_file = darfield_v2
+    streamed = tmp_path / "streamed.srf"
+    with srf.Writer(streamed, srf_file.planes, comments=COMMENTS) as writer:
+        writer.write(srf_file.points, srf_file.slip_rate)
+    whole = tmp_path / "whole.srf"
+    srf.write(whole, dataclasses.replace(srf_file, comments=COMMENTS))
+    assert streamed.read_bytes() == whole.read_bytes()
+    assert srf.read(streamed).comments == COMMENTS
+
+
+@pytest.mark.parametrize(
+    ("comment", "message"),
+    [
+        ("two\nlines", "line break"),
+        ("carriage\rreturn", "line break"),
+        ("nul\0", "NUL"),
+        ("é" * (srf.MAX_COMMENT_BYTES // 2 + 1), "8190 bytes"),
+    ],
+)
+def test_a_comment_that_is_not_one_short_line_is_refused(
+    christchurch, darfield_v2, tmp_path, comment, message
+):
+    with pytest.raises(srf.SrfError, match=f"comment 1 .*{message}"):
+        dataclasses.replace(christchurch, comments=["fine", comment])
+    path = tmp_path / "refused.srf"
+    with pytest.raises(srf.SrfError, match=message):
+        srf.Writer(path, darfield_v2[1].planes, comments=["fine", comment])
+    assert not path.exists()
