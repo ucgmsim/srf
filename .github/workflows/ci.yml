@@ -10,7 +10,6 @@ jobs:
     uses: ucgmsim/meta-ci-action/.github/workflows/ci.yml@v2
     with:
       uv-extra-args: "--all-extras --dev"
-      exclude-init: false
       enable-coverage: true
       cov-package: srf
       cov-fail-under: 95

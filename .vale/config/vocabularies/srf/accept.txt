@@ -6,7 +6,9 @@ EMOD3D
 genslip
 codec
 docstrings
-numpy
+NumPy
+[Dd]ataclass(?:es)?
+toolchain
 scipy
 nom
 [Ss]ubfaults?

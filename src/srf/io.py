@@ -1,0 +1,194 @@
+"""Reading and writing SRF files, over the Rust codec in ``srf._core``.
+
+The reader takes versions 1.0 and 2.0, and :func:`write` writes either whole. The
+streaming :class:`Writer` writes version 2.0 only. The ``slip1`` component is the
+only one they handle, and the reader refuses a file with a ``slip2`` or ``slip3``
+pulse.
+"""
+
+import dataclasses
+import mmap
+import os
+from collections.abc import Buffer, Sequence
+from types import TracebackType
+from typing import Self
+
+from srf import _core
+from srf.types import Plane, Points, SlipRate, Srf, SrfError
+
+type FilePath = str | os.PathLike[str]
+
+
+def _from_core(parsed: _core.PySrfFile) -> Srf:
+    names = [field.name for field in dataclasses.fields(Plane)]
+    metadata = parsed.metadata
+    return Srf(
+        planes=[
+            Plane(**{name: getattr(plane, name) for name in names})
+            for plane in parsed.planes
+        ],
+        points=Points(
+            **{
+                field.name: getattr(metadata, field.name)
+                for field in dataclasses.fields(Points)
+            }
+        ),
+        slip_rate=SlipRate(offsets=parsed.slipt1.row_ptr, values=parsed.slipt1.data),
+    )
+
+
+def _core_planes(planes: Sequence[Plane]) -> list[_core.PySrfPlane]:
+    return [_core.PySrfPlane(**dataclasses.asdict(plane)) for plane in planes]
+
+
+def _core_points(points: Points) -> _core.PySrfMetadata:
+    return _core.PySrfMetadata(
+        **{
+            field.name: getattr(points, field.name)
+            for field in dataclasses.fields(Points)
+        }
+    )
+
+
+def _core_slip_rate(slip_rate: SlipRate) -> _core.PyCsrMatrix:
+    return _core.PyCsrMatrix(
+        row_ptr=slip_rate.offsets, data=slip_rate.values, indices=slip_rate.columns
+    )
+
+
+def read(source: FilePath | Buffer) -> Srf:
+    """Read an SRF.
+
+    Parameters
+    ----------
+    source : str, os.PathLike or Buffer
+        A path to the file, or its bytes. A file is memory-mapped rather than read
+        into memory first.
+
+    Returns
+    -------
+    Srf
+        The file's planes, points and pulses.
+
+    Raises
+    ------
+    SrfError
+        If the source isn't an SRF this reader supports.
+    OSError
+        If opening or mapping the file fails.
+    """
+    if not isinstance(source, (str, os.PathLike)):
+        return _from_core(_core.parse_srf(source))
+    try:
+        with open(source, "rb") as handle:
+            if os.fstat(handle.fileno()).st_size == 0:
+                raise SrfError("The file is empty")
+            with mmap.mmap(handle.fileno(), 0, access=mmap.ACCESS_READ) as mapped:
+                if hasattr(mapped, "madvise"):
+                    mapped.madvise(mmap.MADV_SEQUENTIAL)
+                parsed = _core.parse_srf(mapped)
+    except SrfError as error:
+        raise SrfError(f"{os.fspath(source)}: {error}") from error
+    return _from_core(parsed)
+
+
+def write(path: FilePath, srf: Srf) -> None:
+    """Write a whole SRF, at the version its points make.
+
+    Parameters
+    ----------
+    path : str or os.PathLike
+        Where to write the file.
+    srf : Srf
+        What to write.
+
+    Raises
+    ------
+    OSError
+        If creating or writing the file fails.
+    """
+    _core.write_srf(
+        _core.PySrfFile(
+            _core_planes(srf.planes),
+            _core_points(srf.points),
+            _core_slip_rate(srf.slip_rate),
+        ),
+        os.fspath(path),
+    )
+
+
+class Writer:
+    """Write a version 2.0 SRF a run of points at a time.
+
+    The header goes out when the writer opens. Each :meth:`write` adds the next
+    points in file order, and a run may start or end anywhere in a plane.
+    :meth:`close` checks that the writer wrote every point the planes declare. Used as a
+    context manager, it closes on a clean exit and on an exception leaves the file
+    unfinished, so that it doesn't read as an SRF.
+
+    Parameters
+    ----------
+    path : str or os.PathLike
+        Where to write the file.
+    planes : sequence of Plane
+        Every plane's header.
+
+    Raises
+    ------
+    OSError
+        If creating the file or writing the header fails.
+    """
+
+    def __init__(self, path: FilePath, planes: Sequence[Plane]) -> None:
+        """Open the file and write the header."""
+        self._writer = _core.SrfWriter(os.fspath(path), _core_planes(planes))
+
+    def write(self, points: Points, slip_rate: SlipRate) -> None:
+        """Write the next points and their pulses.
+
+        Parameters
+        ----------
+        points : Points
+            The points, with ``vs`` and ``density``.
+        slip_rate : SlipRate
+            One pulse per point.
+
+        Raises
+        ------
+        SrfError
+            If the points have no ``vs`` and ``density``, the pulses and the points
+            differ in number, or the points run past what the planes declare.
+        ValueError
+            If the writer has closed.
+        OSError
+            If writing fails.
+        """
+        self._writer.write(_core_points(points), _core_slip_rate(slip_rate))
+
+    def close(self) -> None:
+        """Finish the file. Closing a closed writer does nothing.
+
+        Raises
+        ------
+        SrfError
+            If the writer wrote fewer points than the planes declare.
+        OSError
+            If writing fails.
+        """
+        self._writer.close()
+
+    def __enter__(self) -> Self:
+        """Use the writer as a context manager."""
+        return self
+
+    def __exit__(
+        self,
+        exc_type: type[BaseException] | None,
+        exc_value: BaseException | None,
+        traceback: TracebackType | None,
+    ) -> None:
+        """Close the writer, or abandon the file if the block raised."""
+        self._writer.__exit__(exc_type, exc_value, traceback)
+
+
+__all__ = ["Writer", "read", "write"]
