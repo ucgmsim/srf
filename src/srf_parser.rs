@@ -18,7 +18,7 @@
 use nom::bytes::complete::tag;
 use nom::character::complete::{line_ending, multispace0, not_line_ending, space0};
 use nom::error::{ContextError, ErrorKind, ParseError, context};
-use nom::multi::{count, many0_count};
+use nom::multi::{count, many0};
 use nom::sequence::{preceded, terminated};
 use nom::{IResult, Parser};
 use thiserror::Error;
@@ -176,13 +176,24 @@ fn version(input: &[u8]) -> Parsed<'_, Version> {
     }
 }
 
-/// Comment lines, which a version 2 file may have between its version and `PLANE`.
-fn comments(input: &[u8]) -> Parsed<'_, ()> {
-    many0_count(preceded(
-        multispace0,
-        (tag(&b"#"[..]), not_line_ending, line_ending),
+/// The comment lines between the version line and `PLANE`, each one's text after its
+/// `#` and one space.
+///
+/// genslip's `read_srf` keeps these lines, in either version, and its `write_srf`
+/// writes them back after the version line. Nothing else in an SRF is a comment.
+fn comments(input: &[u8]) -> Parsed<'_, Vec<String>> {
+    many0(preceded(
+        keyword("#"),
+        terminated(not_line_ending, line_ending),
     ))
-    .map(|_| ())
+    .map(|lines: Vec<&[u8]>| {
+        lines
+            .into_iter()
+            .map(|line| {
+                String::from_utf8_lossy(line.strip_prefix(b" ").unwrap_or(line)).into_owned()
+            })
+            .collect()
+    })
     .parse(input)
 }
 
@@ -386,11 +397,7 @@ fn points_v2<'a>(
 
 fn srf(input: &[u8]) -> Parsed<'_, SrfFile> {
     let (input, version) = version(input)?;
-    // Comments can only occur between the version indicator and the PLANE token.
-    let (input, ()) = match version {
-        Version::V1 => (input, ()),
-        Version::V2 => comments(input)?,
-    };
+    let (input, comments) = comments(input)?;
     let (input, planes) = planes(input)?;
     let (input, (metadata, slipt1)) = match version {
         Version::V1 => {
@@ -405,6 +412,7 @@ fn srf(input: &[u8]) -> Parsed<'_, SrfFile> {
     Ok((
         input,
         SrfFile {
+            comments,
             planes,
             metadata,
             slipt1,
@@ -419,11 +427,28 @@ fn srf(input: &[u8]) -> Parsed<'_, SrfFile> {
 /// [`SrfParseError`] for bytes that aren't an SRF this parser reads, with the line and
 /// column of a syntax error.
 pub fn read_srf(input: &[u8]) -> Result<SrfFile, SrfParseError> {
-    match srf(input) {
-        Ok((_, file)) => Ok(file),
+    finish(srf(input), input)
+}
+
+/// A whole parse's value, or its fault as the public error.
+fn finish<'a, T>(parsed: Parsed<'a, T>, input: &'a [u8]) -> Result<T, SrfParseError> {
+    match parsed {
+        Ok((_, value)) => Ok(value),
         Err(nom::Err::Error(fault) | nom::Err::Failure(fault)) => Err(fault.into_error(input)),
         Err(nom::Err::Incomplete(_)) => unreachable!("every parser here is complete"),
     }
+}
+
+/// Parse an SRF's version line and header comments, and nothing after them.
+///
+/// The parse stops at the first line that isn't a comment, so it reads a few
+/// kilobytes of a file of any size.
+///
+/// # Errors
+///
+/// [`SrfParseError`] if the bytes don't start with an SRF version line.
+pub fn read_comments(input: &[u8]) -> Result<Vec<String>, SrfParseError> {
+    finish(preceded(version, comments).parse(input), input)
 }
 
 #[cfg(test)]
@@ -480,6 +505,44 @@ POINTS 2\n\
         assert_eq!(metadata.vs, vec![3.5, 3.6]);
         assert_eq!(metadata.density, vec![2.7, 2.8]);
         assert_eq!(srf.slipt1.data, vec![0.1, 0.2, 0.3, 0.4, 0.5]);
+    }
+
+    #[test]
+    fn header_comments_are_kept_in_either_version() {
+        for srf in [SRF_V1, SRF_V2] {
+            let commented = replace_once(
+                srf,
+                b"PLANE",
+                b"# made by: a test\n#\n  #  indented, with #s inside #\nPLANE",
+            );
+            assert_eq!(
+                read_srf(&commented).unwrap().comments,
+                ["made by: a test", "", " indented, with #s inside #"],
+            );
+        }
+        assert_eq!(read_srf(SRF_V2).unwrap().comments, Vec::<String>::new());
+    }
+
+    #[test]
+    fn the_comments_alone_read_without_the_rest() {
+        let commented = replace_once(SRF_V2, b"PLANE", b"# one\n# two\nPLANE");
+        // The parse stops at PLANE, so a file cut short there still reads.
+        let cut = &commented[..commented.len() - 40];
+        assert_eq!(read_comments(cut).unwrap(), ["one", "two"]);
+        assert_eq!(read_comments(SRF_V2).unwrap(), Vec::<String>::new());
+        assert!(matches!(
+            read_comments(b"3.0\n# no\n"),
+            Err(SrfParseError::UnknownVersion(_))
+        ));
+    }
+
+    #[test]
+    fn a_comment_past_the_header_is_a_syntax_error() {
+        let commented = replace_once(SRF_V2, b"POINTS", b"# late\nPOINTS");
+        assert!(matches!(
+            read_srf(&commented),
+            Err(SrfParseError::Syntax { line: 5, .. })
+        ));
     }
 
     // Two 1x1 planes, each with its own POINTS block.

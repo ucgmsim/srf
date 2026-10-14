@@ -61,11 +61,15 @@ fn marshall_srf_error<T, U: error::Error>(e: U) -> PyResult<T> {
     Err(SrfError::new_err(e.to_string()))
 }
 
-fn buffer_bytes(buf: &PyBuffer<u8>) -> &[u8] {
-    // SAFETY: the caller promises a live, C-contiguous, readable u8 export. The
-    // slice's lifetime is that of `buf`, and dropping the PyBuffer while the slice
-    // is in use is a compile error.
-    unsafe { std::slice::from_raw_parts(buf.buf_ptr().cast(), buf.item_count()) }
+/// The bytes of a C-contiguous buffer, which the parsers read in place.
+fn buffer_bytes(buf: &PyBuffer<u8>) -> PyResult<&[u8]> {
+    if !buf.is_c_contiguous() {
+        return Err(PyValueError::new_err("SRF buffer must be C-contiguous"));
+    }
+    // SAFETY: a live, C-contiguous, readable u8 export, checked first. The slice's
+    // lifetime is that of `buf`, and dropping the PyBuffer while the slice is in use
+    // is a compile error.
+    Ok(unsafe { std::slice::from_raw_parts(buf.buf_ptr().cast(), buf.item_count()) })
 }
 
 #[pyfunction]
@@ -73,15 +77,29 @@ fn buffer_bytes(buf: &PyBuffer<u8>) -> &[u8] {
 ///
 /// If the buffer isn't C-contiguous, or isn't a valid SRF file.
 pub fn parse_srf(py: Python<'_>, buffer: PyBuffer<u8>) -> PyResult<Py<PySrfFile>> {
-    if !buffer.is_c_contiguous() {
-        return Err(PyValueError::new_err("SRF buffer must be C-contiguous"));
-    }
-    let bytes = buffer_bytes(&buffer);
+    let bytes = buffer_bytes(&buffer)?;
     if bytes.is_empty() {
         return Err(SrfError::new_err("Cannot parse SRF from empty buffer"));
     }
     let srf_file = py.detach(|| srf_parser::read_srf(bytes).or_else(marshall_srf_error))?;
     Ok(srf_file.into_pyobject(py)?.unbind())
+}
+
+#[pyfunction]
+/// # Errors
+///
+/// If the buffer isn't C-contiguous, or doesn't start with an SRF version line.
+pub fn parse_comments(py: Python<'_>, buffer: PyBuffer<u8>) -> PyResult<Vec<String>> {
+    let bytes = buffer_bytes(&buffer)?;
+    py.detach(|| srf_parser::read_comments(bytes).or_else(marshall_srf_error))
+}
+
+#[pyfunction]
+/// # Errors
+///
+/// If a comment has a line break or a NUL, or is longer than genslip reads.
+pub fn check_comments(comments: Vec<String>) -> PyResult<()> {
+    srf_writer::check_comments(&comments).or_else(marshall_srf_error)
 }
 
 #[pyfunction]
@@ -125,6 +143,7 @@ pub fn write_srf(py: Python<'_>, py_srf_file: Py<PySrfFile>, file_path: &str) ->
     };
 
     let srf_view: SrfFileView = SrfFileView {
+        comments: srf.comments.clone(),
         planes,
         metadata: metadata_view,
         slipt1: CsrMatrixView {
@@ -158,13 +177,23 @@ pub struct PySrfWriter {
 impl PySrfWriter {
     /// # Errors
     ///
-    /// If creating or writing the file fails.
+    /// If a comment can't be one line of the header, or creating or writing the file
+    /// fails.
     #[new]
-    fn new(py: Python<'_>, file_path: &str, planes: Vec<SrfPlane>) -> PyResult<Self> {
+    #[pyo3(signature = (file_path, planes, comments = Vec::new()))]
+    fn new(
+        py: Python<'_>,
+        file_path: &str,
+        planes: Vec<SrfPlane>,
+        comments: Vec<String>,
+    ) -> PyResult<Self> {
+        // Checked before the file exists. A refused comment doesn't create one.
+        srf_writer::check_comments(&comments).or_else(marshall_srf_error)?;
         let writer = py.detach(|| {
             let file = File::create(file_path).or_else(marshall_os_error)?;
             let mut writer = BufWriter::with_capacity(WRITE_BUFFER_CAPACITY, file);
-            srf_writer::write_header_v2(&mut writer, &planes).or_else(marshall_os_error)?;
+            srf_writer::write_header_v2(&mut writer, &comments, &planes)
+                .or_else(marshall_write_error)?;
             Ok::<_, PyErr>(writer)
         })?;
         Ok(Self {
@@ -265,6 +294,7 @@ impl PySrfWriter {
 #[pyo3(name = "_core")]
 fn core(m: &Bound<'_, PyModule>) -> PyResult<()> {
     m.add("SrfError", m.py().get_type::<SrfError>())?;
+    m.add("MAX_COMMENT_BYTES", srf_writer::MAX_COMMENT_BYTES)?;
     m.add_class::<SrfPlane>()?;
     m.add_class::<PyCsrMatrix>()?;
     m.add_class::<PySrfMetadata>()?;
@@ -272,6 +302,8 @@ fn core(m: &Bound<'_, PyModule>) -> PyResult<()> {
     m.add_class::<PySrfWriter>()?;
     m.add_function(wrap_pyfunction!(write_srf, m)?)?;
     m.add_function(wrap_pyfunction!(parse_srf, m)?)?;
+    m.add_function(wrap_pyfunction!(parse_comments, m)?)?;
+    m.add_function(wrap_pyfunction!(check_comments, m)?)?;
 
     Ok(())
 }
