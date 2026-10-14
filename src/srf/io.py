@@ -15,7 +15,7 @@ from types import TracebackType
 from typing import Self
 
 from srf import _core
-from srf.types import Plane, Points, SlipRate, Srf, SrfError, check_comment
+from srf.types import Plane, Points, SlipRate, Srf, SrfError
 
 type FilePath = str | Path
 
@@ -193,8 +193,6 @@ class Writer:
         self, path: FilePath, planes: Sequence[Plane], comments: Sequence[str] = ()
     ) -> None:
         """Open the file and write the header."""
-        for index, comment in enumerate(comments):
-            check_comment(index, comment)
         self._writer = _core.SrfWriter(str(path), _core_planes(planes), list(comments))
 
     def write(self, points: Points, slip_rate: SlipRate) -> None:

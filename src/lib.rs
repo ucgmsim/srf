@@ -61,11 +61,15 @@ fn marshall_srf_error<T, U: error::Error>(e: U) -> PyResult<T> {
     Err(SrfError::new_err(e.to_string()))
 }
 
-fn buffer_bytes(buf: &PyBuffer<u8>) -> &[u8] {
-    // SAFETY: the caller promises a live, C-contiguous, readable u8 export. The
-    // slice's lifetime is that of `buf`, and dropping the PyBuffer while the slice
-    // is in use is a compile error.
-    unsafe { std::slice::from_raw_parts(buf.buf_ptr().cast(), buf.item_count()) }
+/// The bytes of a C-contiguous buffer, which the parsers read in place.
+fn buffer_bytes(buf: &PyBuffer<u8>) -> PyResult<&[u8]> {
+    if !buf.is_c_contiguous() {
+        return Err(PyValueError::new_err("SRF buffer must be C-contiguous"));
+    }
+    // SAFETY: a live, C-contiguous, readable u8 export, checked first. The slice's
+    // lifetime is that of `buf`, and dropping the PyBuffer while the slice is in use
+    // is a compile error.
+    Ok(unsafe { std::slice::from_raw_parts(buf.buf_ptr().cast(), buf.item_count()) })
 }
 
 #[pyfunction]
@@ -73,10 +77,7 @@ fn buffer_bytes(buf: &PyBuffer<u8>) -> &[u8] {
 ///
 /// If the buffer isn't C-contiguous, or isn't a valid SRF file.
 pub fn parse_srf(py: Python<'_>, buffer: PyBuffer<u8>) -> PyResult<Py<PySrfFile>> {
-    if !buffer.is_c_contiguous() {
-        return Err(PyValueError::new_err("SRF buffer must be C-contiguous"));
-    }
-    let bytes = buffer_bytes(&buffer);
+    let bytes = buffer_bytes(&buffer)?;
     if bytes.is_empty() {
         return Err(SrfError::new_err("Cannot parse SRF from empty buffer"));
     }
@@ -89,11 +90,16 @@ pub fn parse_srf(py: Python<'_>, buffer: PyBuffer<u8>) -> PyResult<Py<PySrfFile>
 ///
 /// If the buffer isn't C-contiguous, or doesn't start with an SRF version line.
 pub fn parse_comments(py: Python<'_>, buffer: PyBuffer<u8>) -> PyResult<Vec<String>> {
-    if !buffer.is_c_contiguous() {
-        return Err(PyValueError::new_err("SRF buffer must be C-contiguous"));
-    }
-    let bytes = buffer_bytes(&buffer);
+    let bytes = buffer_bytes(&buffer)?;
     py.detach(|| srf_parser::read_comments(bytes).or_else(marshall_srf_error))
+}
+
+#[pyfunction]
+/// # Errors
+///
+/// If a comment has a line break or a NUL, or is longer than genslip reads.
+pub fn check_comments(comments: Vec<String>) -> PyResult<()> {
+    srf_writer::check_comments(&comments).or_else(marshall_srf_error)
 }
 
 #[pyfunction]
@@ -181,6 +187,8 @@ impl PySrfWriter {
         planes: Vec<SrfPlane>,
         comments: Vec<String>,
     ) -> PyResult<Self> {
+        // Checked before the file exists. A refused comment doesn't create one.
+        srf_writer::check_comments(&comments).or_else(marshall_srf_error)?;
         let writer = py.detach(|| {
             let file = File::create(file_path).or_else(marshall_os_error)?;
             let mut writer = BufWriter::with_capacity(WRITE_BUFFER_CAPACITY, file);
@@ -295,6 +303,7 @@ fn core(m: &Bound<'_, PyModule>) -> PyResult<()> {
     m.add_function(wrap_pyfunction!(write_srf, m)?)?;
     m.add_function(wrap_pyfunction!(parse_srf, m)?)?;
     m.add_function(wrap_pyfunction!(parse_comments, m)?)?;
+    m.add_function(wrap_pyfunction!(check_comments, m)?)?;
 
     Ok(())
 }

@@ -183,7 +183,7 @@ fn version(input: &[u8]) -> Parsed<'_, Version> {
 /// writes them back after the version line. Nothing else in an SRF is a comment.
 fn comments(input: &[u8]) -> Parsed<'_, Vec<String>> {
     many0(preceded(
-        (multispace0, tag(&b"#"[..])),
+        keyword("#"),
         terminated(not_line_ending, line_ending),
     ))
     .map(|lines: Vec<&[u8]>| {
@@ -427,8 +427,13 @@ fn srf(input: &[u8]) -> Parsed<'_, SrfFile> {
 /// [`SrfParseError`] for bytes that aren't an SRF this parser reads, with the line and
 /// column of a syntax error.
 pub fn read_srf(input: &[u8]) -> Result<SrfFile, SrfParseError> {
-    match srf(input) {
-        Ok((_, file)) => Ok(file),
+    finish(srf(input), input)
+}
+
+/// A whole parse's value, or its fault as the public error.
+fn finish<'a, T>(parsed: Parsed<'a, T>, input: &'a [u8]) -> Result<T, SrfParseError> {
+    match parsed {
+        Ok((_, value)) => Ok(value),
         Err(nom::Err::Error(fault) | nom::Err::Failure(fault)) => Err(fault.into_error(input)),
         Err(nom::Err::Incomplete(_)) => unreachable!("every parser here is complete"),
     }
@@ -443,11 +448,7 @@ pub fn read_srf(input: &[u8]) -> Result<SrfFile, SrfParseError> {
 ///
 /// [`SrfParseError`] if the bytes don't start with an SRF version line.
 pub fn read_comments(input: &[u8]) -> Result<Vec<String>, SrfParseError> {
-    match (version, comments).parse(input) {
-        Ok((_, (_, comments))) => Ok(comments),
-        Err(nom::Err::Error(fault) | nom::Err::Failure(fault)) => Err(fault.into_error(input)),
-        Err(nom::Err::Incomplete(_)) => unreachable!("every parser here is complete"),
-    }
+    finish(preceded(version, comments).parse(input), input)
 }
 
 #[cfg(test)]

@@ -19,7 +19,7 @@ from typing import Self
 import numpy as np
 from numpy.typing import ArrayLike, DTypeLike, NDArray
 
-from srf._core import MAX_COMMENT_BYTES, SrfError
+from srf._core import MAX_COMMENT_BYTES, SrfError, check_comments
 
 POINT_COLUMNS = (
     "lon",
@@ -359,37 +359,6 @@ class SlipRate:
         )
 
 
-def check_comment(index: int, comment: str) -> None:
-    """Refuse a comment that can't be one line of an SRF's header.
-
-    genslip reads each comment line into an 8192-byte buffer. A comment longer than
-    :data:`MAX_COMMENT_BYTES` in UTF-8 would split there, and its rest would read as
-    the ``PLANE`` line.
-
-    Parameters
-    ----------
-    index : int
-        The comment's place among the header's comments, for the error.
-    comment : str
-        The comment, without its leading ``# ``.
-
-    Raises
-    ------
-    SrfError
-        If the comment has a line break or a NUL, or is too long.
-    """
-    if any(character in comment for character in "\n\r\0"):
-        raise SrfError(
-            f"comment {index} has a line break or a NUL, which would end it early"
-        )
-    size = len(comment.encode())
-    if size > MAX_COMMENT_BYTES:
-        raise SrfError(
-            f"comment {index} is {size} bytes; genslip reads at most "
-            f"{MAX_COMMENT_BYTES} per comment line"
-        )
-
-
 @dataclasses.dataclass(frozen=True, eq=False)
 class Srf:
     """A whole SRF: its planes, then their points and pulses in plane order.
@@ -423,8 +392,7 @@ class Srf:
         """Check the fields and coerce them to the file's types."""
         object.__setattr__(self, "planes", tuple(self.planes))
         object.__setattr__(self, "comments", tuple(self.comments))
-        for index, comment in enumerate(self.comments):
-            check_comment(index, comment)
+        check_comments(list(self.comments))
         declared = sum(plane.points for plane in self.planes)
         if not declared == len(self.points) == len(self.slip_rate):
             raise SrfError(
@@ -457,5 +425,4 @@ __all__ = [
     "SlipRate",
     "Srf",
     "SrfError",
-    "check_comment",
 ]

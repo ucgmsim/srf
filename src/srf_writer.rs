@@ -317,7 +317,12 @@ pub fn write_header_v2<W: Write>(
 }
 
 /// Refuse a comment that can't be one line of the header, as genslip reads it.
-fn check_comments(comments: &[String]) -> Result<()> {
+///
+/// # Errors
+///
+/// [`WriteError::CommentBreak`] or [`WriteError::CommentLength`] for the first comment
+/// that isn't one line genslip reads whole.
+pub fn check_comments(comments: &[String]) -> Result<()> {
     for (index, comment) in comments.iter().enumerate() {
         if comment.contains(['\n', '\r', '\0']) {
             return Err(WriteError::CommentBreak { index });
