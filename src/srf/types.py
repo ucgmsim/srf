@@ -14,6 +14,7 @@ too.
 import dataclasses
 import itertools
 from collections.abc import Iterable, Sequence
+from typing import Self
 
 import numpy as np
 from numpy.typing import ArrayLike, DTypeLike, NDArray
@@ -183,7 +184,7 @@ class Points:
         """int: The SRF version these columns make, 2 with the rock and 1 without."""
         return 1 if self.vs is None else 2
 
-    def __getitem__(self, index: slice) -> "Points":
+    def __getitem__(self, index: slice) -> Self:
         """A run of points, as views of these columns.
 
         Parameters
@@ -271,7 +272,7 @@ class SlipRate:
             object.__setattr__(self, "columns", columns)
 
     @classmethod
-    def from_pulses(cls, pulses: Iterable[ArrayLike]) -> "SlipRate":
+    def from_pulses(cls, pulses: Iterable[ArrayLike]) -> Self:
         """The matrix whose rows are ``pulses``, each dense from its onset.
 
         Parameters
@@ -327,7 +328,7 @@ class SlipRate:
         dense[self.columns[start:stop]] = self.values[start:stop]
         return dense
 
-    def __getitem__(self, index: slice) -> "SlipRate":
+    def __getitem__(self, index: slice) -> Self:
         """A run of rows, with their offsets re-based to zero.
 
         Parameters
@@ -351,7 +352,7 @@ class SlipRate:
         stop = max(start, stop)
         offsets = self.offsets[start : stop + 1]
         first, last = int(offsets[0]), int(offsets[-1])
-        return SlipRate(
+        return type(self)(
             offsets=offsets - offsets[0],
             values=self.values[first:last],
             columns=None if self.columns is None else self.columns[first:last],

@@ -58,6 +58,8 @@ extend-select = [
   "ANN001",
   # Using except without specifying an exception type to catch
   "BLE001",
+  # pathlib rather than os and os.path
+  "PTH",
 ]
 
 [tool.ruff.lint.pydocstyle]

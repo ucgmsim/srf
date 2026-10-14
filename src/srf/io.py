@@ -8,15 +8,15 @@ pulse.
 
 import dataclasses
 import mmap
-import os
 from collections.abc import Buffer, Sequence
+from pathlib import Path
 from types import TracebackType
 from typing import Self
 
 from srf import _core
 from srf.types import Plane, Points, SlipRate, Srf, SrfError
 
-type FilePath = str | os.PathLike[str]
+type FilePath = str | Path
 
 
 def _from_core(parsed: _core.PySrfFile) -> Srf:
@@ -61,7 +61,7 @@ def read(source: FilePath | Buffer) -> Srf:
 
     Parameters
     ----------
-    source : str, os.PathLike or Buffer
+    source : str, Path or Buffer
         A path to the file, or its bytes. A file is memory-mapped rather than read
         into memory first.
 
@@ -77,18 +77,21 @@ def read(source: FilePath | Buffer) -> Srf:
     OSError
         If opening or mapping the file fails.
     """
-    if not isinstance(source, (str, os.PathLike)):
+    if not isinstance(source, (str, Path)):
         return _from_core(_core.parse_srf(source))
+    path = Path(source)
     try:
-        with open(source, "rb") as handle:
-            if os.fstat(handle.fileno()).st_size == 0:
-                raise SrfError("The file is empty")
-            with mmap.mmap(handle.fileno(), 0, access=mmap.ACCESS_READ) as mapped:
-                if hasattr(mapped, "madvise"):
-                    mapped.madvise(mmap.MADV_SEQUENTIAL)
-                parsed = _core.parse_srf(mapped)
+        if path.stat().st_size == 0:
+            raise SrfError("The file is empty")
+        with (
+            path.open("rb") as handle,
+            mmap.mmap(handle.fileno(), 0, access=mmap.ACCESS_READ) as mapped,
+        ):
+            if hasattr(mapped, "madvise"):
+                mapped.madvise(mmap.MADV_SEQUENTIAL)
+            parsed = _core.parse_srf(mapped)
     except SrfError as error:
-        raise SrfError(f"{os.fspath(source)}: {error}") from error
+        raise SrfError(f"{path}: {error}") from error
     return _from_core(parsed)
 
 
@@ -97,7 +100,7 @@ def write(path: FilePath, srf: Srf) -> None:
 
     Parameters
     ----------
-    path : str or os.PathLike
+    path : str or Path
         Where to write the file.
     srf : Srf
         What to write.
@@ -113,7 +116,7 @@ def write(path: FilePath, srf: Srf) -> None:
             _core_points(srf.points),
             _core_slip_rate(srf.slip_rate),
         ),
-        os.fspath(path),
+        str(path),
     )
 
 
@@ -128,7 +131,7 @@ class Writer:
 
     Parameters
     ----------
-    path : str or os.PathLike
+    path : str or Path
         Where to write the file.
     planes : sequence of Plane
         Every plane's header.
@@ -141,7 +144,7 @@ class Writer:
 
     def __init__(self, path: FilePath, planes: Sequence[Plane]) -> None:
         """Open the file and write the header."""
-        self._writer = _core.SrfWriter(os.fspath(path), _core_planes(planes))
+        self._writer = _core.SrfWriter(str(path), _core_planes(planes))
 
     def write(self, points: Points, slip_rate: SlipRate) -> None:
         """Write the next points and their pulses.
