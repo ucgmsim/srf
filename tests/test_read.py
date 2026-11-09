@@ -136,6 +136,18 @@ def test_junk_bytes_are_refused():
         srf.read(b"garbage\n")
 
 
+@pytest.mark.parametrize("reader", [srf.read, srf.read_comments])
+def test_an_empty_file_says_so_after_its_path(reader, tmp_path):
+    """An empty file isn't mapped (mmap refuses zero bytes); its error names it."""
+    path = tmp_path / "nothing.srf"
+    path.touch()
+    with pytest.raises(srf.SrfError) as caught:
+        reader(str(path))
+    assert str(caught.value) == f"{path}: The file is empty"
+    assert isinstance(caught.value.__cause__, srf.SrfError)
+    assert str(caught.value.__cause__) == "The file is empty"
+
+
 def test_a_hand_written_version_2():
     """Every value in the two-point file, checked by eye against it."""
     srf_v2 = srf.read(SRF_DIR / "point_source_v2.srf")
