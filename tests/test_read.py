@@ -138,7 +138,7 @@ def test_junk_bytes_are_refused():
 
 @pytest.mark.parametrize("reader", [srf.read, srf.read_comments])
 def test_an_empty_file_says_so_after_its_path(reader, tmp_path):
-    """An empty file isn't mapped (mmap refuses zero bytes); its error names it."""
+    """mmap refuses zero bytes. The error for an empty file includes its path."""
     path = tmp_path / "nothing.srf"
     path.touch()
     with pytest.raises(srf.SrfError) as caught:
