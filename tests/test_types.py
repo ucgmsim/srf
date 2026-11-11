@@ -180,3 +180,80 @@ def test_whatever_the_records_accept_round_trips(tmp_path_factory, srf_file):
             np.testing.assert_array_equal(getattr(reread.points, field.name), expected)
     np.testing.assert_array_equal(reread.slip_rate.offsets, srf_file.slip_rate.offsets)
     np.testing.assert_array_equal(reread.slip_rate.values, srf_file.slip_rate.values)
+
+
+def test_points_name_the_rule_on_half_the_rock():
+    with pytest.raises(
+        srf.SrfError,
+        match=r"^vs and density must both be given \(version 2\) or neither$",
+    ):
+        dataclasses.replace(points(3), density=None)
+
+
+def test_a_slip_rate_refuses_offsets_that_decrease_midway():
+    # Starts at 0 and ends at the number of values, but steps back in between.
+    with pytest.raises(
+        srf.SrfError,
+        match=(
+            r"^offsets must start at 0, never decrease, and end at the number of "
+            r"values \(2\)$"
+        ),
+    ):
+        srf.SlipRate(offsets=np.array([0, 2, 1, 2]), values=np.array([1.0, 2.0]))
+
+
+@pytest.mark.parametrize(
+    ("fields", "message"),
+    [
+        ({"offsets": np.array([0, -1])}, r"^offsets must not be negative$"),
+        (
+            {"offsets": np.array([0.0, 1.0])},
+            r"^offsets must hold integers, not float64$",
+        ),
+        (
+            {"offsets": np.zeros((2, 1), dtype=int)},
+            r"^offsets must be one-dimensional, not shape \(2, 1\)$",
+        ),
+        (
+            {"values": np.zeros((1, 1))},
+            r"^values must be one-dimensional, not shape \(1, 1\)$",
+        ),
+        ({"columns": np.array([0, -1])}, r"^columns must not be negative$"),
+        (
+            {"columns": np.array([0.0, 1.0])},
+            r"^columns must hold integers, not float64$",
+        ),
+        ({"columns": np.array([0, 1, 2])}, r"^There are 3 columns for 2 values$"),
+        (
+            {"columns": np.array([1, 1])},
+            r"^The columns must strictly increase along each row$",
+        ),
+    ],
+)
+def test_a_slip_rate_names_the_field_it_refuses(fields, message):
+    arguments = {"offsets": np.array([0, 2]), "values": np.array([1.0, 2.0])}
+    arguments.update(fields)
+    with pytest.raises(srf.SrfError, match=message):
+        srf.SlipRate(**arguments)
+
+
+def test_columns_may_step_by_one_and_rows_may_trail_empty():
+    # Adjacent columns are a strict increase, and empty rows at the end start at
+    # the number of values, past the last step between columns.
+    rate = srf.SlipRate(
+        offsets=np.array([0, 3, 3, 3]),
+        values=np.array([1.0, 2.0, 3.0]),
+        columns=np.array([0, 1, 2]),
+    )
+    assert rate.columns is not None
+    assert rate.columns.tolist() == [0, 1, 2]
+    assert rate.samples.tolist() == [3, 0, 0]
+    assert rate.pulse(0).tolist() == [1.0, 2.0, 3.0]
+    assert rate.pulse(2).tolist() == []
+
+
+def test_from_pulses_names_a_pulse_of_the_wrong_shape():
+    with pytest.raises(
+        srf.SrfError, match=r"^pulse must be one-dimensional, not shape \(1, 2\)$"
+    ):
+        srf.SlipRate.from_pulses([[1.0], [[1.0, 2.0]]])
