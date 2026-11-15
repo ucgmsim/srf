@@ -234,10 +234,10 @@ fn planes(input: &[u8]) -> Parsed<'_, Vec<SrfPlane>> {
 // ruptures with large slip histories.
 const APPROX_BYTES_PER_SLIP_VALUE: usize = 12;
 
-// The fewest bytes a point can take: eleven numbers, each with a separator. Capacity
-// reserved for points is capped at what the input could hold, so a header that
-// declares more points than the file has fails with a syntax error at the end of
-// input, rather than an allocation of terabytes.
+// The fewest bytes a point can take: eleven numbers, each with a separator. The
+// parser caps the capacity it reserves for points at the number of points the
+// remaining input has room for. A header that declares more points than the file
+// contains fails with a syntax error at the end of input.
 const MIN_BYTES_PER_POINT: usize = 22;
 
 /// The points `plane` declares, refusing a count that overflows.

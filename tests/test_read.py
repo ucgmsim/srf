@@ -317,13 +317,13 @@ def huge_header(version: str, nstk: int, ndip: int, points: int) -> bytes:
 @pytest.mark.parametrize("n", [10**12, 4 * 10**18])
 def test_a_huge_declared_point_count_is_a_syntax_error(version, n):
     # Reserving room for every declared point up front aborted the process or
-    # panicked with a capacity overflow, rather than reaching the end of input.
+    # panicked with a capacity overflow before the parser reached the end of input.
     with pytest.raises(srf.SrfError, match='expected a number, found "end of input"'):
         srf.read(huge_header(version, n, 1, n))
 
 
 @pytest.mark.parametrize("version", ["1.0", "2.0"])
 def test_a_point_count_that_overflows_is_refused(version):
-    # 2**32 * 2**32 wrapped to 0 points, so the parser accepted POINTS 0.
+    # 2**32 * 2**32 wrapped to 0 points. The parser then accepted POINTS 0.
     with pytest.raises(srf.SrfError, match="more points than"):
         srf.read(huge_header(version, 2**32, 2**32, 0))
