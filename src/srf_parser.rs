@@ -52,6 +52,8 @@ pub enum SrfParseError {
         declared: usize,
         expected: usize,
     },
+    #[error("PLANE headers declare more points than the parser can count")]
+    PointCountOverflow,
     #[error("SRF parser does not support slip{0} array ")]
     UnsupportedSlipArray(usize),
 }
@@ -232,6 +234,29 @@ fn planes(input: &[u8]) -> Parsed<'_, Vec<SrfPlane>> {
 // ruptures with large slip histories.
 const APPROX_BYTES_PER_SLIP_VALUE: usize = 12;
 
+// The fewest bytes a point can take: eleven numbers, each with a separator. Capacity
+// reserved for points is capped at what the input could hold, so a header that
+// declares more points than the file has fails with a syntax error at the end of
+// input, rather than an allocation of terabytes.
+const MIN_BYTES_PER_POINT: usize = 22;
+
+/// The points `plane` declares, refusing a count that overflows.
+fn plane_points<'a>(plane: &SrfPlane) -> Result<usize, nom::Err<Fault<'a>>> {
+    plane
+        .nstk
+        .checked_mul(plane.ndip)
+        .ok_or_else(|| nom::Err::Failure(Fault::Srf(Box::new(SrfParseError::PointCountOverflow))))
+}
+
+/// The points all of `planes` declare, refusing a count that overflows.
+fn total_points<'a>(planes: &[SrfPlane]) -> Result<usize, nom::Err<Fault<'a>>> {
+    planes.iter().try_fold(0usize, |total, plane| {
+        total.checked_add(plane_points(plane)?).ok_or_else(|| {
+            nom::Err::Failure(Fault::Srf(Box::new(SrfParseError::PointCountOverflow)))
+        })
+    })
+}
+
 // Tiny PointHeader used to construct actual points later.
 #[derive(Debug)]
 struct PointHeader {
@@ -328,14 +353,15 @@ fn slip_row<'a>(input: &'a [u8], slipt1: &mut CsrMatrix, nt: usize) -> Parsed<'a
 
 fn points_v1<'a>(input: &'a [u8], planes: &[SrfPlane]) -> Parsed<'a, (SrfMetadata, CsrMatrix)> {
     let (mut input, ()) = keyword("POINTS").parse(input)?;
-    let expected = planes.iter().map(SrfPlane::points).sum();
+    let expected = total_points(planes)?;
     let declared;
     (input, declared) = number(input)?;
     if declared != expected {
         return refuse(SrfParseError::PointCountMismatch { declared, expected });
     }
-    let mut metadata = SrfMetadata::with_capacity(declared);
-    let mut slipt1 = CsrMatrix::new(declared, input.len() / APPROX_BYTES_PER_SLIP_VALUE);
+    let reserve = declared.min(input.len() / MIN_BYTES_PER_POINT);
+    let mut metadata = SrfMetadata::with_capacity(reserve);
+    let mut slipt1 = CsrMatrix::new(reserve, input.len() / APPROX_BYTES_PER_SLIP_VALUE);
 
     for _ in 0..declared {
         let header;
@@ -361,19 +387,20 @@ fn points_v2<'a>(
     mut input: &'a [u8],
     planes: &[SrfPlane],
 ) -> Parsed<'a, (SrfMetadataV2, CsrMatrix)> {
-    let total = planes.iter().map(SrfPlane::points).sum();
-    let mut metadata = SrfMetadataV2::with_capacity(total);
-    let mut slipt1 = CsrMatrix::new(total, input.len() / APPROX_BYTES_PER_SLIP_VALUE);
+    let reserve = total_points(planes)?.min(input.len() / MIN_BYTES_PER_POINT);
+    let mut metadata = SrfMetadataV2::with_capacity(reserve);
+    let mut slipt1 = CsrMatrix::new(reserve, input.len() / APPROX_BYTES_PER_SLIP_VALUE);
 
     for (plane, header) in planes.iter().enumerate() {
         (input, ()) = keyword("POINTS").parse(input)?;
         let declared;
         (input, declared) = number(input)?;
-        if declared != header.points() {
+        let expected = plane_points(header)?;
+        if declared != expected {
             return refuse(SrfParseError::PlanePointCountMismatch {
                 plane,
                 declared,
-                expected: header.points(),
+                expected,
             });
         }
         for _ in 0..declared {
