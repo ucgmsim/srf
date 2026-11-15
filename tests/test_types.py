@@ -285,7 +285,7 @@ def test_an_srf_keeps_its_planes_and_comments_as_tuples():
     headers = [plane(1, 1), plane(2, 1)]
     comments = ["made by a test"]
     whole = srf.Srf(headers, points(3), srf.SlipRate.from_pulses([[1.0]] * 3), comments)
-    # The record holds its own copies, so changing the caller's lists can't change it.
+    # The record stores copies. Changing the caller's lists leaves it unchanged.
     headers.append(plane())
     comments.append("later")
     assert whole.planes == (plane(1, 1), plane(2, 1))
