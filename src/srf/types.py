@@ -357,8 +357,8 @@ class SlipRate:
         axis : {0, 1, -1, -2}, optional
             The axis to sum over. 0 sums over the points and leaves one value per
             sample, as many as the longest pulse has. 1 sums over the samples and
-            leaves one value per point, which times ``dt`` is the point's slip.
-            Without it the sum is over every sample of every point.
+            leaves one value per point. Multiply that by ``dt`` for each point's
+            slip. Without it the sum is over every sample of every point.
 
         Returns
         -------
