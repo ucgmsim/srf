@@ -360,3 +360,38 @@ def test_sums_match_the_dense_matrix(pulses, data):
         dense[row, delay : delay + pulse.size] = pulse
     np.testing.assert_allclose(rate.sum(axis=0), dense.sum(axis=0), rtol=1e-12)
     np.testing.assert_allclose(rate.sum(axis=1), dense.sum(axis=1), rtol=1e-12)
+
+
+def test_a_sparse_pulse_is_dense_single_precision():
+    # Filling in skipped columns gives the file's precision, not NumPy's default.
+    rate = srf.SlipRate(
+        offsets=np.array([0, 2]),
+        values=np.array([0.1, 0.2]),
+        columns=np.array([0, 2]),
+    )
+    pulse = rate.pulse(0)
+    assert pulse.dtype == np.float32
+    np.testing.assert_array_equal(
+        pulse, np.array([0.1, 0.0, 0.2], dtype=np.float32), strict=True
+    )
+
+
+def test_a_strided_run_names_the_rule():
+    rate = srf.SlipRate.from_pulses([[1.0], [2.0], [3.0]])
+    with pytest.raises(
+        ValueError, match=r"^Rows can only be taken as a contiguous run$"
+    ):
+        rate[::2]
+
+
+def test_an_srf_keeps_its_planes_and_comments_as_tuples():
+    headers = [plane(1, 1), plane(2, 1)]
+    comments = ["made by a test"]
+    whole = srf.Srf(headers, points(3), srf.SlipRate.from_pulses([[1.0]] * 3), comments)
+    # The record stores copies. Changing the caller's lists leaves it unchanged.
+    headers.append(plane())
+    comments.append("later")
+    assert whole.planes == (plane(1, 1), plane(2, 1))
+    assert isinstance(whole.planes, tuple)
+    assert whole.comments == ("made by a test",)
+    assert whole.plane_points == (slice(0, 1), slice(1, 3))
