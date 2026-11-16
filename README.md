@@ -36,6 +36,18 @@ with srf.Writer("rupture.srf", planes, comments=["made by: me"]) as writer:
         writer.write(points, slip_rate)
 ```
 
+The slip rate is a sparse matrix with a row for each point, and sums like one. Each
+pulse counts from its own onset, so delay the pulses by their onsets to add them up
+on one time axis:
+
+```python
+points, slip_rate = rupture.points, rupture.slip_rate
+slip_rate.sum(axis=1) * points.dt  # each point's slip, in cm
+onsets = np.rint(points.tinit / points.dt).astype(int)
+slip_rate.delay(onsets).sum(axis=0)  # the summed slip rate at each time step
+slip_rate[points.dep < 5].sum(axis=0)  # a mask or a slice takes some of the points
+```
+
 Values keep the file's own units, so slip and rock are in centimetre-gram-second
 units. The records check their arrays when built and refuse an inconsistent SRF
 with `srf.SrfError`, a `ValueError`. The reader and writers handle the `slip1`

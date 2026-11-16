@@ -14,7 +14,7 @@ too.
 import dataclasses
 import itertools
 from collections.abc import Iterable, Sequence
-from typing import Self
+from typing import Literal, Self, overload
 
 import numpy as np
 from numpy.typing import ArrayLike, DTypeLike, NDArray
@@ -328,13 +328,123 @@ class SlipRate:
         dense[self.columns[start:stop]] = self.values[start:stop]
         return dense
 
-    def __getitem__(self, index: slice) -> Self:
-        """A run of rows, with their offsets re-based to zero.
+    def _counts(self) -> NDArray[np.int64]:
+        """How many samples each row stores."""
+        return np.diff(self.offsets.astype(np.int64))
+
+    def _stored_columns(self) -> NDArray[np.int64]:
+        """Each stored sample's column, whether or not the matrix records them."""
+        if self.columns is not None:
+            return self.columns.astype(np.int64)
+        starts = np.repeat(self.offsets[:-1].astype(np.int64), self._counts())
+        return np.arange(self.values.size, dtype=np.int64) - starts
+
+    @overload
+    def sum(self, axis: None = None) -> np.float64: ...
+    @overload
+    def sum(self, axis: Literal[0, 1, -1, -2]) -> NDArray[np.float64]: ...
+    def sum(
+        self, axis: Literal[0, 1, -1, -2] | None = None
+    ) -> np.float64 | NDArray[np.float64]:
+        """The sum of the pulses, over the points, the samples or both.
+
+        The sum is in double precision. Summing over the points adds the pulses
+        sample by sample, each from its own onset. For a source time function,
+        :meth:`delay` each pulse by its onset first.
 
         Parameters
         ----------
-        index : slice
-            The rows to take. The step must be 1.
+        axis : {0, 1, -1, -2}, optional
+            The axis to sum over. 0 sums over the points and leaves one value per
+            sample, as many as the longest pulse has. 1 sums over the samples and
+            leaves one value per point. Multiply that by ``dt`` for each point's
+            slip. Without it the sum is over every sample of every point.
+
+        Returns
+        -------
+        np.float64 or np.ndarray
+            The sum, in centimetres per second.
+
+        Raises
+        ------
+        ValueError
+            If ``axis`` isn't one of the matrix's two axes.
+        """
+        if axis is None:
+            return self.values.sum(dtype=np.float64)
+        if axis in (0, -2):
+            bins, length = self._stored_columns(), int(self.samples.max(initial=0))
+        elif axis in (1, -1):
+            bins, length = np.repeat(np.arange(len(self)), self._counts()), len(self)
+        else:
+            raise ValueError(f"axis must be 0, 1 or None, not {axis!r}")
+        return np.bincount(bins, weights=self.values, minlength=length)
+
+    def delay(self, samples: ArrayLike) -> Self:
+        """The pulses with each one starting some samples later.
+
+        The delayed rows record their columns, so they share a time axis and
+        ``delay(onsets).sum(axis=0)`` is the slip rate of all the points together.
+        The delay counts as part of the pulse from then on. :attr:`samples`
+        includes it, and the writer would store it as zeros.
+
+        Parameters
+        ----------
+        samples : array_like
+            How many samples to delay each point's pulse by, such as
+            ``np.rint(points.tinit / points.dt).astype(int)``.
+
+        Returns
+        -------
+        SlipRate
+            The delayed pulses, sharing these values.
+
+        Raises
+        ------
+        SrfError
+            If ``samples`` isn't one non-negative integer per point.
+        """
+        delays = _index_column("samples", samples)
+        if delays.size != len(self):
+            raise SrfError(f"There are {delays.size} delays for {len(self)} points")
+        columns = self._stored_columns() + np.repeat(
+            delays.astype(np.int64), self._counts()
+        )
+        return type(self)(
+            offsets=self.offsets,
+            values=self.values,
+            columns=columns.astype(np.uintp),
+        )
+
+    def _take(self, index: ArrayLike) -> Self:
+        """The rows an index array or mask selects, copied in the order it gives."""
+        chosen = np.asarray(index)
+        if chosen.size == 0:
+            # An empty list is an array of floats, which can't index.
+            chosen = chosen.astype(np.intp)
+        rows = np.arange(len(self))[chosen]
+        if rows.ndim != 1:
+            raise IndexError("Rows are taken with a slice, a mask or a list of rows")
+        counts = self._counts()[rows]
+        offsets = np.concatenate(([0], np.cumsum(counts)))
+        # Each kept sample's place in ``values``: its row's old start plus its
+        # distance along the row.
+        shifts = self.offsets[rows].astype(np.int64) - offsets[:-1]
+        stored = np.arange(offsets[-1]) + np.repeat(shifts, counts)
+        return type(self)(
+            offsets=offsets,
+            values=self.values[stored],
+            columns=None if self.columns is None else self.columns[stored],
+        )
+
+    def __getitem__(self, index: slice | ArrayLike) -> Self:
+        """Some of the rows, with their offsets re-based to zero.
+
+        Parameters
+        ----------
+        index : slice or array_like
+            The rows to take. A slice must have a step of 1, and gives views of
+            the values. A boolean mask or an array of row indices copies them.
 
         Returns
         -------
@@ -345,7 +455,12 @@ class SlipRate:
         ------
         ValueError
             If the slice has a step other than 1.
+        IndexError
+            If an index array selects a row that isn't there, or isn't
+            one-dimensional.
         """
+        if not isinstance(index, slice):
+            return self._take(index)
         start, stop, step = index.indices(len(self))
         if step != 1:
             raise ValueError("Rows can only be taken as a contiguous run")

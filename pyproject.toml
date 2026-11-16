@@ -111,3 +111,9 @@ skip = true
 [[tool.npdlint.scope]]
 match = { nested = true }
 skip = true
+
+# An overload is a signature for the type checker. The implementation has the
+# docstring.
+[[tool.npdlint.scope]]
+match = { overload = true }
+skip = true

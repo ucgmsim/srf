@@ -259,6 +259,109 @@ def test_from_pulses_names_a_pulse_of_the_wrong_shape():
         srf.SlipRate.from_pulses([[1.0], [[1.0, 2.0]]])
 
 
+def ragged() -> srf.SlipRate:
+    return srf.SlipRate.from_pulses([[1.0, 2.0], [], [3.0, 4.0, 5.0], [6.0]])
+
+
+def test_a_slip_rate_sums_over_either_axis_or_both():
+    rate = ragged()
+    assert rate.sum() == 21.0
+    assert rate.sum(axis=0).tolist() == [10.0, 6.0, 5.0]
+    assert rate.sum(axis=-2).tolist() == [10.0, 6.0, 5.0]
+    assert rate.sum(axis=1).tolist() == [3.0, 0.0, 12.0, 6.0]
+    assert rate.sum(axis=-1).tolist() == [3.0, 0.0, 12.0, 6.0]
+    assert rate.sum(axis=0).dtype == np.float64
+
+
+def test_a_slip_rate_with_columns_sums_by_column():
+    rate = srf.SlipRate(
+        offsets=np.array([0, 2, 3], dtype=np.uintp),
+        values=np.array([1.0, 2.0, 4.0], dtype=np.float32),
+        columns=np.array([0, 3, 3], dtype=np.uintp),
+    )
+    assert rate.sum(axis=0).tolist() == [1.0, 0.0, 0.0, 6.0]
+    assert rate.sum(axis=1).tolist() == [3.0, 4.0]
+
+
+def test_a_slip_rate_refuses_an_axis_it_does_not_have():
+    with pytest.raises(ValueError, match="axis must be 0, 1 or None, not 2"):
+        ragged().sum(axis=2)  # ty: ignore[no-matching-overload]
+
+
+def test_an_empty_slip_rate_sums_to_nothing():
+    rate = srf.SlipRate.from_pulses([])
+    assert rate.sum() == 0.0
+    assert rate.sum(axis=0).shape == (0,)
+    assert rate.sum(axis=1).shape == (0,)
+    assert srf.SlipRate.from_pulses([[], []]).sum(axis=0).shape == (0,)
+
+
+def test_delayed_pulses_sum_on_one_time_axis():
+    delayed = ragged().delay([2, 7, 0, 3])
+    assert delayed.columns is not None
+    assert delayed.columns.tolist() == [2, 3, 0, 1, 2, 3]
+    assert delayed.samples.tolist() == [4, 0, 3, 4]
+    assert delayed.pulse(0).tolist() == [0.0, 0.0, 1.0, 2.0]
+    assert delayed.sum(axis=0).tolist() == [3.0, 4.0, 6.0, 8.0]
+    # A delay adds to the columns a row already has.
+    assert delayed.delay([1, 0, 0, 0]).pulse(0).tolist() == [0.0, 0.0, 0.0, 1.0, 2.0]
+
+
+@pytest.mark.parametrize(
+    ("samples", "message"),
+    [
+        ([1, 2], "There are 2 delays for 4 points"),
+        ([0, -1, 0, 0], "samples must not be negative"),
+        ([0.5, 0, 0, 0], "samples must hold integers"),
+    ],
+)
+def test_a_delay_must_be_a_count_for_each_point(samples, message):
+    with pytest.raises(srf.SrfError, match=message):
+        ragged().delay(samples)
+
+
+def test_rows_are_taken_with_a_mask_or_a_list():
+    rate = ragged()
+    masked = rate[np.array([True, False, True, False])]
+    assert masked.offsets.tolist() == [0, 2, 5]
+    assert masked.values.tolist() == [1.0, 2.0, 3.0, 4.0, 5.0]
+    assert masked.columns is None
+    picked = rate[[3, -2, 1]]
+    assert picked.offsets.tolist() == [0, 1, 4, 4]
+    assert picked.values.tolist() == [6.0, 3.0, 4.0, 5.0]
+    assert len(rate[[]]) == 0
+    delayed = rate.delay([2, 0, 1, 0])[[2, 0]]
+    assert delayed.columns is not None
+    assert delayed.columns.tolist() == [1, 2, 3, 2, 3]
+    assert delayed.sum(axis=0).tolist() == [0.0, 3.0, 5.0, 7.0]
+
+
+def test_rows_refuse_an_index_that_is_not_a_run_a_mask_or_a_list():
+    with pytest.raises(IndexError, match="out of bounds"):
+        ragged()[[4]]
+    with pytest.raises(IndexError, match="Rows are taken with"):
+        ragged()[0]
+
+
+@given(
+    pulses=st.lists(
+        hnp.arrays(np.float32, st.integers(0, 6), elements=FLOATS), max_size=6
+    ),
+    data=st.data(),
+)
+def test_sums_match_the_dense_matrix(pulses, data):
+    delays = data.draw(
+        st.lists(st.integers(0, 5), min_size=len(pulses), max_size=len(pulses))
+    )
+    rate = srf.SlipRate.from_pulses(pulses).delay(delays)
+    width = max((d + p.size for d, p in zip(delays, pulses) if p.size), default=0)
+    dense = np.zeros((len(pulses), width))
+    for row, (delay, pulse) in enumerate(zip(delays, pulses)):
+        dense[row, delay : delay + pulse.size] = pulse
+    np.testing.assert_allclose(rate.sum(axis=0), dense.sum(axis=0), rtol=1e-12)
+    np.testing.assert_allclose(rate.sum(axis=1), dense.sum(axis=1), rtol=1e-12)
+
+
 def test_a_sparse_pulse_is_dense_single_precision():
     # Filling in skipped columns gives the file's precision, not NumPy's default.
     rate = srf.SlipRate(
