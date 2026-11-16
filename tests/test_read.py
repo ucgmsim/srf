@@ -296,3 +296,34 @@ def test_the_comments_read_alone_match_the_whole_file():
     assert srf.read_comments(SRF_DIR / "point_source_v2.srf") == ()
     with pytest.raises(srf.SrfError, match="unknown SRF version"):
         srf.read_comments(b"3.0\n# no\n")
+
+
+def huge_header(version: str, nstk: int, ndip: int, points: int) -> bytes:
+    """A short file whose headers declare `points` points, but which holds one."""
+    vs_density = " 3.0 2.5" if version == "2.0" else ""
+    return (
+        f"{version}\n"
+        "PLANE 1\n"
+        f"0.0 0.0 {nstk} {ndip} 4.0 2.0\n"
+        "90.0 45.0 0.0 0.0 1.0\n"
+        f"POINTS {points}\n"
+        f"0.1 -43.0 5.0 90.0 45.0 1.0e10 0.5 0.1{vs_density}\n"
+        "30.0 1.5 1 0.0 0 0.0 0\n"
+        "0.1\n"
+    ).encode()
+
+
+@pytest.mark.parametrize("version", ["1.0", "2.0"])
+@pytest.mark.parametrize("n", [10**12, 4 * 10**18])
+def test_a_huge_declared_point_count_is_a_syntax_error(version, n):
+    # Reserving room for every declared point up front aborted the process or
+    # panicked with a capacity overflow before the parser reached the end of input.
+    with pytest.raises(srf.SrfError, match='expected a number, found "end of input"'):
+        srf.read(huge_header(version, n, 1, n))
+
+
+@pytest.mark.parametrize("version", ["1.0", "2.0"])
+def test_a_point_count_that_overflows_is_refused(version):
+    # 2**32 * 2**32 wrapped to 0 points. The parser then accepted POINTS 0.
+    with pytest.raises(srf.SrfError, match="more points than"):
+        srf.read(huge_header(version, 2**32, 2**32, 0))
