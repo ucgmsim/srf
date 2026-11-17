@@ -407,7 +407,7 @@ def test_the_whole_sum_is_in_double_precision():
 
 def test_from_pulses_rounds_integer_pulses_once():
     # 2**54 + 2**30 + 1 is just over halfway between two single-precision numbers.
-    # Rounding it to double precision first lands on the halfway point, which then
+    # Rounding it to double precision first gives the halfway point, which then
     # rounds down to even, so each pulse must go to single precision on its own.
     big = 2**54 + 2**30 + 1
     rate = srf.SlipRate.from_pulses(
