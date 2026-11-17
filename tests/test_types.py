@@ -395,3 +395,50 @@ def test_an_srf_keeps_its_planes_and_comments_as_tuples():
     assert isinstance(whole.planes, tuple)
     assert whole.comments == ("made by a test",)
     assert whole.plane_points == (slice(0, 1), slice(1, 3))
+
+
+def test_the_whole_sum_is_in_double_precision():
+    # 2**24 + 1 isn't a single-precision number, so a float32 sum loses the 1.
+    rate = srf.SlipRate.from_pulses([[2.0**24], [1.0]])
+    total = rate.sum()
+    assert type(total) is np.float64
+    assert total == 2**24 + 1
+
+
+def test_from_pulses_rounds_integer_pulses_once():
+    # 2**54 + 2**30 + 1 is just over halfway between two single-precision numbers.
+    # Rounding it to double precision first gives the halfway point, which then
+    # rounds down to even, so each pulse must go to single precision on its own.
+    big = 2**54 + 2**30 + 1
+    rate = srf.SlipRate.from_pulses(
+        [np.array([big], dtype=np.int64), np.array([1], dtype=np.uint64)]
+    )
+    assert rate.values.dtype == np.float32
+    assert rate.values.astype(np.int64).tolist() == [2**54 + 2**31, 1]
+
+
+def test_columns_far_along_a_row_are_compared_exactly():
+    # Columns past 2**53 have no exact double, so a check in floating point would
+    # call these two adjacent columns equal.
+    far = 2**53
+    rate = srf.SlipRate(
+        offsets=np.array([0, 2], dtype=np.uintp),
+        values=np.array([1.0, 2.0], dtype=np.float32),
+        columns=np.array([far, far + 1], dtype=np.uintp),
+    )
+    assert rate.samples.tolist() == [far + 2]
+
+
+def test_a_long_delay_is_added_exactly():
+    rate = srf.SlipRate.from_pulses([[1.0, 2.0]])
+    delayed = rate.delay([2**53 + 1])
+    assert delayed.columns is not None
+    assert delayed.columns.tolist() == [2**53 + 1, 2**53 + 2]
+    assert delayed.samples.tolist() == [2**53 + 3]
+
+
+def test_taking_a_row_by_a_scalar_names_the_rule():
+    with pytest.raises(
+        IndexError, match=r"^Rows are taken with a slice, a mask or a list of rows$"
+    ):
+        ragged()[0]
