@@ -314,13 +314,19 @@ class SlipRate:
         Parameters
         ----------
         point : int
-            The point's index.
+            The point's index, counting from the end if negative.
 
         Returns
         -------
         np.ndarray
             The slip rate at each sample, in centimetres per second.
+
+        Raises
+        ------
+        IndexError
+            If the point is out of range.
         """
+        point = range(len(self))[point]
         start, stop = int(self.offsets[point]), int(self.offsets[point + 1])
         if self.columns is None:
             return self.values[start:stop]
