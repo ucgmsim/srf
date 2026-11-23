@@ -376,6 +376,27 @@ def test_a_sparse_pulse_is_dense_single_precision():
     )
 
 
+@pytest.mark.parametrize("delayed", [False, True])
+def test_a_negative_point_counts_from_the_end(delayed):
+    rate = srf.SlipRate.from_pulses([[1.0, 2.0], [3.0, 4.0, 5.0]])
+    if delayed:
+        rate = rate.delay([0, 1])
+    for point in range(len(rate)):
+        np.testing.assert_array_equal(
+            rate.pulse(point - len(rate)), rate.pulse(point), strict=True
+        )
+
+
+@pytest.mark.parametrize("delayed", [False, True])
+@pytest.mark.parametrize("point", [-3, 2])
+def test_a_point_out_of_range_is_an_index_error(delayed, point):
+    rate = srf.SlipRate.from_pulses([[1.0, 2.0], [3.0, 4.0, 5.0]])
+    if delayed:
+        rate = rate.delay([0, 1])
+    with pytest.raises(IndexError):
+        rate.pulse(point)
+
+
 def test_a_strided_run_names_the_rule():
     rate = srf.SlipRate.from_pulses([[1.0], [2.0], [3.0]])
     with pytest.raises(
